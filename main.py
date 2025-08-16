@@ -4,12 +4,18 @@
 # or:
 #   uv run python main.py https://www.popmart.com/jp/products/3884
 
-import sys, json, time, re, os
+import sys, json, time, re, os, smtplib
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ADD_TO_CART_PATTERNS = [r"カートに追加", r"カートへ", r"Add to Cart", r"カート", r"購入"]
-SOLD_OUT_PATTERNS    = [r"在庫切れ", r"SOLD OUT", r"売り切れ", r"完売"]
+SOLD_OUT_PATTERNS    = [r"在庫切れ", r"SOLD OUT", r"売り切れ", r"完売", r"再入荷を通知"]
 
 def jst_now_iso():
     jst = timezone(timedelta(hours=9))
@@ -18,6 +24,53 @@ def jst_now_iso():
 def text_matches_any(text, patterns):
     t = (text or "").strip()
     return any(re.search(p, t, re.IGNORECASE) for p in patterns)
+
+def send_stock_notification(url, price=None):
+    try:
+        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        sender_email = os.getenv("SENDER_EMAIL")
+        sender_password = os.getenv("SENDER_PASSWORD")
+        receiver_emails_env = os.getenv("RECEIVER_EMAIL", "kaka_0814@ymobile.ne.jp,route666@live.cn")
+        receiver_emails = [email.strip() for email in receiver_emails_env.split(",")]
+        
+        if not sender_email or not sender_password:
+            print("Warning: Email credentials not configured. Set SENDER_EMAIL and SENDER_PASSWORD environment variables.")
+            return False
+        
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = ", ".join(receiver_emails)
+        msg['Subject'] = "🎉 POPMART Stock Alert - Item Available!"
+        
+        price_text = f"\nPrice: {price}" if price else ""
+        body = f"""
+Good news! The item you're watching is now in stock:
+
+URL: {url}{price_text}
+Checked at: {jst_now_iso()}
+
+Don't miss out - add it to your cart now!
+        """.strip()
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+                server.login(sender_email, sender_password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.send_message(msg)
+        
+        print(f"✅ Stock notification sent to {', '.join(receiver_emails)}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send email notification: {e}")
+        return False
 
 def check(url: str):
     attempts = int(os.getenv("RETRIES", "3"))
@@ -126,6 +179,11 @@ def check(url: str):
                     "price": price,
                     "checked_at": jst_now_iso(),
                 }
+                
+                # Send email notification if item is in stock
+                if in_stock:
+                    send_stock_notification(url, price)
+                
                 browser.close()
                 return result
 

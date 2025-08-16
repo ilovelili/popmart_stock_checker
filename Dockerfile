@@ -25,4 +25,4 @@ RUN uv run playwright install chromium
 
 # Default command (override URL via `-e URL=...` or arguments)
 ENV URL=https://www.popmart.com/jp/products/3884
-CMD ["uv", "run", "python", "main.py", "$URL"]
+CMD uv run python main.py $URL
